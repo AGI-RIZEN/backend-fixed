@@ -1,0 +1,316 @@
+// ============================================================================
+// SkyDesk database schema
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Real user model — email + hashed password for login, role for access
+// control. Passwords are never stored in plain text; only a bcrypt hash
+// is persisted (see src/services/auth.service.js).
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("employee") // "admin" | "employee"
+  createdAt    DateTime @default(now())
+
+  trips         Trip[]
+  bookings      Booking[]
+  expenses      Expense[]
+  advances      Advance[]
+  wallet        Wallet?
+  savedCards    SavedCard[]
+  transactions  WalletTransaction[]
+  notifications Notification[]
+  refreshTokens RefreshToken[]
+  wishlistItems WishlistItem[]
+  savedFlights  SavedFlight[]
+  resetTokens   PasswordResetToken[]
+}
+
+// One row per issued refresh token, so a token can be individually
+// revoked (logout) without invalidating every session, and so expired/used
+// tokens can be cleaned up. The token value itself is stored as a hash,
+// never in plain text — same principle as the password.
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// Single-use, short-lived token for the forgot-password flow. Same
+// pattern as RefreshToken: only the hash is stored, never the raw
+// token, so a database read alone can't be used to reset someone's
+// password.
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// Powers the notification bell — things like "expense approved",
+// "card transaction matched", "advance settled". `type` lets the
+// frontend pick an icon/color without parsing the message text.
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String   // "expense" | "trip" | "advance" | "wallet" | "system"
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, read])
+}
+
+model Trip {
+  id          String   @id @default(uuid())
+  userId      String
+  title       String
+  destination String
+  startDate   DateTime
+  endDate     DateTime
+  status      String   @default("Upcoming") // "Upcoming" | "Completed"
+  createdAt   DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id])
+  bookings Booking[]
+  expenses Expense[]
+  advances Advance[]
+
+  @@index([userId])
+}
+
+model Booking {
+  id        String   @id @default(uuid())
+  userId    String
+  tripId    String?
+  type      String   // "flight" | "hotel" | "cab"
+  status    String   @default("Confirmed")
+  price     Decimal
+  date      DateTime
+
+  // Flight fields
+  airline   String?
+  flightNo  String?
+  from      String?
+  to        String?
+  depart    String?
+  arrive    String?
+  pnr       String?
+
+  // Hotel fields
+  hotelName      String?
+  location       String?
+  checkIn        DateTime?
+  checkOut       DateTime?
+  roomType       String?
+  confirmationNo String?
+
+  // Cab fields
+  provider   String?
+  vehicle    String?
+  pickup     String?
+  drop       String?
+  time       String?
+  bookingRef String?
+
+  createdAt DateTime @default(now())
+
+  user User  @relation(fields: [userId], references: [id])
+  trip Trip? @relation(fields: [tripId], references: [id])
+
+  @@index([userId])
+  @@index([tripId])
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  userId      String
+  tripId      String?
+  bookingId   String?
+  date        DateTime
+  category    String   // "flight" | "hotel" | "meals" | "transit" | "other"
+  merchant    String
+  description String?
+  amount      Decimal
+  status      String   @default("Logged")
+  createdAt   DateTime @default(now())
+
+  user User  @relation(fields: [userId], references: [id])
+  trip Trip? @relation(fields: [tripId], references: [id])
+
+  @@index([userId])
+  @@index([tripId])
+  @@index([category])
+  @@index([date])
+}
+
+model Advance {
+  id          String    @id @default(uuid())
+  userId      String
+  tripId      String?
+  purpose     String
+  requestedOn DateTime  @default(now())
+  amount      Decimal
+  adjusted    Decimal   @default(0)
+  status      String    @default("Pending") // "Pending" | "Settled"
+
+  user User  @relation(fields: [userId], references: [id])
+  trip Trip? @relation(fields: [tripId], references: [id])
+
+  @@index([userId])
+}
+
+// One wallet per user — holds the running balance shown on the
+// Travel Wallet page. Top-ups/deductions happen by updating `balance`
+// and inserting a matching WalletTransaction, never balance alone.
+model Wallet {
+  id      String @id @default(uuid())
+  userId  String @unique
+  balance Decimal @default(0)
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// Personal payment cards saved by the user (not corporate/reconciled
+// cards — just what they see under "Saved Payment Cards").
+// Only the last 4 digits are ever persisted; the full card number
+// submitted by the client is validated and then discarded server-side.
+model SavedCard {
+  id      String  @id @default(uuid())
+  userId  String
+  type    String  // "Visa" | "Mastercard" | ...
+  last4   String
+  expiry  String  // "MM/YY"
+  holder  String
+  primary Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// The wallet's transaction ledger (top-ups, refunds, booking payments,
+// reimbursements) — distinct from Expense (which is what gets logged
+// for reimbursement) and from Booking (what was purchased).
+model WalletTransaction {
+  id     String   @id @default(uuid())
+  userId String
+  title  String
+  type   String   // "credit" | "debit"
+  amount Decimal
+  date   DateTime @default(now())
+  status String   @default("Completed")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// A destination someone's shortlisted for a future trip — powers the
+// Wishlist page. Distinct from SavedFlight: this is "somewhere I want to
+// go" (a destination + a ballpark fare), not a specific flight itinerary.
+model WishlistItem {
+  id           String   @id @default(uuid())
+  userId       String
+  destination  String
+  code         String // airport/city code, e.g. "PAR"
+  price        Decimal // best fare seen so far
+  image        String?
+  reason       String?
+  priceDropped Boolean  @default(false)
+  dropAmount   Decimal?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// A specific flight itinerary someone bookmarked from search results —
+// powers the Saved Flights page. Snapshotted at save time (not a live
+// link to FlightListing) since fares/times shown to the user should stay
+// exactly as they saw them, even if the underlying listing changes later.
+model SavedFlight {
+  id        String   @id @default(uuid())
+  userId    String
+  airline   String
+  flightNo  String
+  from      String
+  to        String
+  depart    String
+  arrive    String
+  duration  String
+  stops     String
+  price     Decimal
+  cabin     String   @default("Economy")
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// Promotional content shown on the Offers page. Global, not per-user —
+// there's no admin UI to manage these yet, so they're seeded directly
+// (see prisma/seed.js), same spirit as a CMS-driven promo banner.
+model Offer {
+  id          String    @id @default(uuid())
+  title       String
+  description String?
+  code        String
+  discount    String?
+  badge       String?
+  gradient    String?
+  icon        String?
+  validUntil  DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+// Seeded flight inventory that the Search Results page queries against.
+// There's no live flight-pricing API wired up, so this stands in for
+// one — a real (if static) dataset instead of hardcoded frontend arrays.
+model FlightListing {
+  id            String   @id @default(uuid())
+  airline       String
+  code          String
+  from          String
+  to            String
+  depart        String
+  arrive        String
+  duration      String
+  stops         String // "Non-stop" | "1 stop" | "2+ stops"
+  price         Decimal
+  cabin         String   @default("Economy")
+  international Boolean  @default(false)
+  tag           String?
+  createdAt     DateTime @default(now())
+
+  @@index([from, to])
+}

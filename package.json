@@ -1,0 +1,41 @@
+{
+  "name": "skydesk-backend",
+  "version": "1.0.0",
+  "description": "SkyDesk Travel & Expense — backend API (business logic layer). Database schema/migrations and authentication (login/signup) are owned by teammates and integrated separately.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "lint": "eslint src",
+    "test": "node --test tests/",
+    "prisma:generate": "prisma generate",
+    "seed:reference": "node prisma/seed-reference.js",
+    "seed:demo": "node prisma/seed-demo.js",
+    "test-token": "node scripts/generate-test-token.js",
+    "demo": "bash scripts/demo.sh"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.20.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "helmet": "^7.1.0",
+    "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.2",
+    "pino": "^9.4.0",
+    "pino-http": "^10.3.0",
+    "rate-limiter-flexible": "^5.0.3",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.5.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "eslint": "^9.11.1",
+    "pino-pretty": "^11.2.2",
+    "prisma": "^5.20.0",
+    "supertest": "^7.0.0",
+    "wait-on": "^7.2.0"
+  }
+}
